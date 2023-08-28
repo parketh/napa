@@ -1,0 +1,7 @@
+[package]
+name = "napa"
+version = "0.1.0"
+cairo-version = "2.1.0-rc4"
+
+[dependencies]
+starknet = "2.1.0-rc4"
