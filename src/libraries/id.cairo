@@ -39,8 +39,8 @@ fn pair_id(
 fn market_id(
     pair_id: felt252,
     is_call: bool,
-    expiry_block: felt252,
-    price: felt252,
+    expiry_block: u64,
+    price: u256,
 ) -> felt252 {
     let mut input = ArrayTrait::<felt252>::new();
     pair_id.serialize(ref input);
