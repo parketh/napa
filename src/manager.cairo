@@ -321,18 +321,25 @@ mod Manager {
             // Update position profit and loss.
             self.update(user);
 
-            // Check liquidation condition. 
             let account = self.accounts.read(user);
             let order = self.orders.read(account.order_id);
             let market = self.markets.read(order.market_id);
             let token_info = self.token_info.read(market.token);
+
+            // Check liquidation condition. 
             let is_liquiditable = account.profit_loss.sign && account.balance + order.margin < mul_div(
                 account.profit_loss.val, token_info.min_collateral_ratio.into(), 1000, false
             );
             let is_insolvent = account.profit_loss.sign && account.balance + order.margin < account.profit_loss.val;
 
             // If liquidation condition is below threshold, transfer position to liquidator at discount.
+            if is_insolvent {
+                
+            }
             // If position is still above water, half of discount is transferred to liquidation fund. 
+            else if is_liquiditable {
+
+            }
 
         }
 
@@ -347,8 +354,8 @@ mod Manager {
         // # Arguments
         // * `token` - token
         // * `price` - price
-        fn update_oracle_price(ref self: ContractState, token: ContractAddress, price: u256) {
-            self.oracle_price.write(token, price);
+        fn update_oracle_price(ref self: ContractState, token: ContractAddress, timestamp: u64, price: u256) {
+            self.oracle_price.write((token, timestamp), price);
         }
 
     }

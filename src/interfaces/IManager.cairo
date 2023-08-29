@@ -58,7 +58,7 @@ trait IManager<TContractState> {
     // TEMP
     ////////////////////////////////
 
-    fn update_oracle_price(ref self: TContractState, token: ContractAddress, price: u256);
+    fn update_oracle_price(ref self: TContractState, token: ContractAddress, timestamp: u64, price: u256);
 
 
 }
