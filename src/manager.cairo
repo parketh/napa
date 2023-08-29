@@ -4,11 +4,14 @@ mod Manager {
 
     use starknet::ContractAddress;
     use starknet::info::{get_block_timestamp, get_caller_address, get_contract_address};
+    use cmp::max;
 
     use napa::libraries::id;
+    use napa::libraries::math::{ONE, mul_div};
     use napa::interfaces::IManager::IManager;
     use napa::interfaces::IERC20::{IERC20Dispatcher, IERC20DispatcherTrait};
     use napa::types::core::{Market, TokenInfo, Order, Limit, Account};
+    use napa::types::i256::{i256, I256Trait, I256Zeroable};
 
     ////////////////////////////////
     // STORAGE
@@ -20,7 +23,6 @@ mod Manager {
         usdc_address: ContractAddress, // currently only supports 1 collateral type
 
         // MUTABLE
-
         // Indexed by token address
         token_info: LegacyMap::<ContractAddress, TokenInfo>,
         // Indexed by user
@@ -31,7 +33,13 @@ mod Manager {
         limits: LegacyMap::<(felt252, u256), Limit>,
         // Indexed by order_id
         orders: LegacyMap::<felt252, Order>,
+
         next_order_id: felt252,
+        liquidation_fund: u256,
+
+        // TEMP
+        // Indexed by (token, timestamp)
+        oracle_price: LegacyMap::<(ContractAddress, u64), u256>,
     }
 
     ////////////////////////////////
@@ -52,6 +60,8 @@ mod Manager {
         strike_price_width: u256,
         expiry_width: u64,
         premium_width: u256,
+        liquidation_discount: u16,
+        min_collateral_ratio: u16,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -87,15 +97,15 @@ mod Manager {
             self.token_info.read(token)
         }
 
-        // fn get_oracle_price(self: @ContractState, oracle: ContractAddress) -> u256 {
-        //     // TODO
-        // }
+        fn get_oracle_price(self: @ContractState, token: ContractAddress, timestamp: u64) -> u256 {
+            self.oracle_price.read((token, timestamp))
+        }
 
         ////////////////////////////////
         // EXTERNAL
         ////////////////////////////////
 
-        // Registers a new token or updates its parameters.
+        // Register a new token or update parameters of an existing one.
         // 
         // # Arguments
         //
@@ -109,9 +119,22 @@ mod Manager {
             strike_price_width: u256,
             expiry_width: u64,
             premium_width: u256,
+            liquidation_discount: u16,
+            min_collateral_ratio: u16,
         ) {
-            self.token_info.write(token, TokenInfo { token, strike_price_width, expiry_width, premium_width });
-            self.emit(Event::SetToken(SetToken { token, strike_price_width, expiry_width, premium_width }));
+            // Validate inputs.
+            assert(strike_price_width > 0, 'StrikePriceWidthZero');
+            assert(expiry_width > 0, 'ExpiryWidthZero');
+            assert(premium_width > 0, 'PremiumWidthZero');
+            assert(liquidation_discount < 1000, 'LiqDiscountOverflow');
+            assert(min_collateral_ratio >= 1000, 'MinColRatioUnderflow');
+            
+            self.token_info.write(token, TokenInfo { 
+                token, strike_price_width, expiry_width, premium_width, liquidation_discount, min_collateral_ratio
+            });
+            self.emit(Event::SetToken(
+                SetToken { token, strike_price_width, expiry_width, premium_width, liquidation_discount, min_collateral_ratio }
+            ));
         }
 
         // Deposits funds into the contract.
@@ -242,9 +265,90 @@ mod Manager {
             (order_id, is_limit_order)
         }
 
-        // Updates account profit and loss.
-        fn update(ref self: ContractState, order_id: felt252) {
-            // TODO
+        // Updates account profit and loss based on latest mark price.
+        // 
+        // # Arguments
+        // * `user` - user to update
+        // 
+        // # Returns
+        // * `profit_loss` - updated profit and loss of the user
+        fn update(ref self: ContractState, user: ContractAddress) -> i256 {
+            let mut account = self.accounts.read(user);
+            assert(account.order_id != 0, 'NoActiveOrder');
+            let order = self.orders.read(account.order_id);
+            let market = self.markets.read(order.market_id);
+            let mark_price = self.oracle_price.read((market.token, get_block_timestamp()));
+
+            // If mark price hasn't changed, return existing profit and loss.
+            if account.last_mark_price == mark_price {
+                return account.profit_loss;
+            }
+
+            // Otherwise, update profit and loss.
+            let mark_price: i256 = I256Trait::new(mark_price, false);
+            let strike_price: i256 = I256Trait::new(market.strike_price, false);
+            let zero: i256 = I256Zeroable::zero();
+            let premium: i256 = I256Trait::new(order.premium, false);
+            let num_contracts: i256 = I256Trait::new(order.num_contracts.into(), false);
+
+            let profit_loss = if market.is_call && order.is_buy {
+                (max(mark_price - strike_price, zero) - premium) * num_contracts
+            } 
+            else if market.is_call && !order.is_buy {
+                (premium - max(mark_price - strike_price, zero)) * num_contracts
+            } 
+            else if !market.is_call && order.is_buy {
+                (max(strike_price - mark_price, zero) - premium) * num_contracts
+            } 
+            else {
+                (premium - max(strike_price - mark_price, zero)) * num_contracts
+            };
+
+            account.profit_loss = profit_loss;
+            self.accounts.write(user, account);
+
+            profit_loss
+        }
+
+        // Settles an expired option position.
+        fn settle(ref self: ContractState, order_id: felt252) {
+
+        }
+
+        // Liquidates an account. 
+        // Transfers ownership of position to liquidator at a discount if liquidation condition is met.
+        fn liquidate(ref self: ContractState, user: ContractAddress, num_contracts: u32) {
+            // Update position profit and loss.
+            self.update(user);
+
+            // Check liquidation condition. 
+            let account = self.accounts.read(user);
+            let order = self.orders.read(account.order_id);
+            let market = self.markets.read(order.market_id);
+            let token_info = self.token_info.read(market.token);
+            let is_liquiditable = account.profit_loss.sign && account.balance + order.margin < mul_div(
+                account.profit_loss.val, token_info.min_collateral_ratio.into(), 1000, false
+            );
+            let is_insolvent = account.profit_loss.sign && account.balance + order.margin < account.profit_loss.val;
+
+            // If liquidation condition is below threshold, transfer position to liquidator at discount.
+            // If position is still above water, half of discount is transferred to liquidation fund. 
+
+        }
+
+
+        ////////////////////////////////
+        // TEMP
+        ////////////////////////////////
+
+        // Updates oracle price.
+        // TODO: Remove this once we have a real oracle.
+        //
+        // # Arguments
+        // * `token` - token
+        // * `price` - price
+        fn update_oracle_price(ref self: ContractState, token: ContractAddress, price: u256) {
+            self.oracle_price.write(token, price);
         }
 
     }

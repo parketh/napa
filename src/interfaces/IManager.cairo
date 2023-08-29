@@ -1,6 +1,7 @@
 use core::zeroable::Zeroable;
 use starknet::ContractAddress;
 use napa::types::core::{Market, TokenInfo, Order};
+use napa::types::i256::i256;
 
 #[starknet::interface]
 trait IManager<TContractState> {
@@ -13,7 +14,7 @@ trait IManager<TContractState> {
 
     fn get_token_info(self: @TContractState, token: ContractAddress) -> TokenInfo;
 
-    // fn get_oracle_price(self: @TContractState, oracle: ContractAddress) -> u256;
+    fn get_oracle_price(self: @TContractState, token: ContractAddress, timestamp: u64) -> u256;
 
     ////////////////////////////////
     // EXTERNAL
@@ -25,6 +26,8 @@ trait IManager<TContractState> {
         strike_price_width: u256,
         expiry_width: u64,
         premium_width: u256,
+        liquidation_discount: u16,
+        min_collateral_ratio: u16,
     );
 
     fn deposit(ref self: TContractState, amount: u256);
@@ -44,20 +47,18 @@ trait IManager<TContractState> {
 
     // fn cancel(ref self: TContractState, order_id: felt252);
 
-    // fn deposit(ref self: TContractState, );
+    fn update(ref self: TContractState, user: ContractAddress) -> i256;
 
-    // fn withdraw(ref self: TContractState, );
+    fn settle(ref self: TContractState, order_id: felt252);
 
-    fn update(ref self: TContractState, order_id: felt252);
-
-    // fn collect(ref self: TContractState, );
-
-    // fn liquidate(ref self: TContractState, );
+    fn liquidate(ref self: TContractState, user: ContractAddress, num_contracts: u32);
 
 
+    ////////////////////////////////
     // TEMP
+    ////////////////////////////////
 
-    // fn update_oracle_price(ref self: TContractState, );
+    fn update_oracle_price(ref self: TContractState, token: ContractAddress, price: u256);
 
 
 }

@@ -8,7 +8,8 @@ struct TokenInfo {
     strike_price_width: u256,
     expiry_width: u64,
     premium_width: u256,
-    // oracle: ContractAddress,
+    liquidation_discount: u16,
+    min_collateral_ratio: u16,
 }
 
 #[derive(Copy, Drop, Serde, starknet::Store)]
@@ -37,17 +38,15 @@ struct Order {
     is_buy: bool,
     premium: u256,
     num_contracts: u32,
-    filled_contracts: u256,
+    filled_contracts: u32,
     margin: u256,
 }
 
 #[derive(Copy, Drop, Serde, starknet::Store)]
 struct Account {
     balance: u256,
-    open_orders: u256,
-    margin: u256,
-    order_id: felt252, // currently restricted to one active order per account only
+    order_id: felt252, // currently restricted to one active order per account only, generalise later with linked list
     profit_loss: i256,
-    last_updated: u64,
+    last_mark_price: u256,
 }
 
