@@ -46,12 +46,10 @@ trait IManager<TContractState> {
         strike_price: u256,
         is_buy: bool,
         premium: u256,
-        amount: u256,
+        num_contracts: u32,
     ) -> (felt252, bool);
 
     // fn cancel(ref self: TContractState, order_id: felt252);
-
-    // fn fill(ref self: TContractState, );
 
     // fn deposit(ref self: TContractState, );
 

@@ -7,7 +7,7 @@ mod Manager {
 
     use napa::libraries::id;
     use napa::interfaces::IManager::IManager;
-    use napa::types::core::{Market, Pair, Order, Fill, Limit, Account};
+    use napa::types::core::{Market, Pair, Order, Limit, Account};
 
     ////////////////////////////////
     // STORAGE
@@ -25,11 +25,7 @@ mod Manager {
         limits: LegacyMap::<(felt252, u256), Limit>,
         // Indexed by order_id
         orders: LegacyMap::<felt252, Order>,
-        // Indexed by fill_id
-        fills: LegacyMap::<felt252, Fill>,
-
         next_order_id: felt252,
-        next_fill_id: felt252,
     }
 
     ////////////////////////////////
@@ -151,7 +147,7 @@ mod Manager {
         // * `price` - strike price of the option
         // * `is_buy` - true if buy order, false if sell order
         // * `premium` - premium (or price) of the option
-        // * `amount` - order size in number of contracts
+        // * `num_contracts` - order size in number of contracts
         //
         // # Returns
         // * `order_id` / `fill_id` - id of the order or fill
@@ -165,7 +161,7 @@ mod Manager {
             strike_price: u256,
             is_buy: bool,
             premium: u256,
-            amount: u256,
+            num_contracts: u32,
         ) -> (felt252, bool) {
             // Check pair is registered.
             let pair_id = id::pair_id(base_token, quote_token);
@@ -207,49 +203,35 @@ mod Manager {
                     owner: get_caller_address(),
                     market_id,
                     is_buy,
-                    amount,
                     premium,
-                    fill_id: 0,
+                    num_contracts,
+                    filled_contracts: 0,
+                    margin: num_contracts.into() * premium,
                 };
                 self.orders.write(order_id, order);
 
-                // Increment order id.
-                self.next_order_id.write(order_id + 1);
-
                 // TODO: insert order into order book of market.
 
-                // Return order id.
-                (order_id, true)
-
+                // TODO: update user account.
             } else {
-                let fill_id = self.next_fill_id.read();
+                // TODO: write logic to fetch next eligible order from order book and update it.
 
-                // TODO: write logic to fetch next eligible order from order book.
-                let filled_order_id = 0; // replace with logic
-                let mut filled_order = self.orders.read(filled_order_id);
-                filled_order.fill_id = fill_id;
+                // TODO: Fill order.
 
-                // Fill order.
-                let fill = Fill {
-                    owner: get_caller_address(),
-                    order_id: filled_order_id,
-                };
-                self.fills.write(fill_id, fill);
-                self.next_fill_id.write(fill_id + 1);
-
-                // TODO: anything else needed to fill order.
-
-                // Return fill id.
-                (fill_id, false)
+                // TODO: update user account.
             }
+
+            // Increment order id.
+            self.next_order_id.write(order_id + 1);
+
+            // Return order id.
+            (order_id, is_limit_order)
         }
 
-        // Updates an order for a 
+        // Updates account profit and loss.
         fn update(ref self: ContractState, order_id: felt252) {
-
+            // TODO
         }
-
-
 
     }
 

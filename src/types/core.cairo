@@ -36,15 +36,10 @@ struct Order {
     owner: ContractAddress,
     market_id: felt252,
     is_buy: bool,
-    amount: u256,
     premium: u256,
-    fill_id: felt252,
-}
-
-#[derive(Copy, Drop, Serde, starknet::Store)]
-struct Fill {
-    owner: ContractAddress,
-    order_id: felt252,
+    num_contracts: u32,
+    filled_contracts: u256,
+    margin: u256,
 }
 
 #[derive(Copy, Drop, Serde, starknet::Store)]
@@ -53,8 +48,7 @@ struct Account {
     open_orders: u256,
     margin: u256,
     order_id: felt252, // currently restricted to one active order per account only
-    fill_id: felt252, // currently restricted to one active fill per account only
-    profit_loss: i256, // p&l position of order
+    profit_loss: i256,
     last_updated: u64,
 }
 
