@@ -201,6 +201,8 @@ mod Manager {
             is_buy: bool,
             premium: u256,
             num_contracts: u32,
+            prev_limit: u256,
+            next_limit: u256,
         ) -> (felt252, bool) {
             // Check pair is registered.
             assert(token.is_non_zero(), 'TokenZero');
@@ -244,10 +246,47 @@ mod Manager {
                     num_contracts,
                     filled_contracts: 0,
                     margin: num_contracts.into() * premium,
+                    next_order_id: order_id,
                 };
                 self.orders.write(order_id, order);
 
                 // TODO: insert order into order book of market.
+                if is_buy {
+                    if (self.markets.read(market_id).ask_limit > premium) {
+                        let mut limit = self.limits.read((market_id, premium));
+                        if (limit.num_contracts == 0) {
+                            let prev_limit_struct = self.limits.read((market_id, prev_limit));
+                            let next_limit_struct = self.limits.read((market_id, prev_limit));
+                            let next_limit_from_prev_limit_struct = self.limits.read((market_id, prev_limit_struct.next_limit));
+                            let prev_limit_from_next_limit_struct = self.limits.read((market_id, next_limit_struct.prev_limit));
+                            assert(prev_limit_struct.next_limit == 0 || next_limit_from_prev_limit_struct.num_contracts == 0, 'prev_order_idNotFound');
+                            assert(next_limit_struct.num_contracts == 0, 'next_order_idNotFound');
+                            let current_limit_struct = Limit {
+                                prev_limit,
+                                next_limit,
+                                num_contracts,
+                                head_order_id: order_id,
+                                tail_order_id: order_id,
+                            };
+                            self.limits.write((market_id, premium), current_limit_struct);
+                        } else {
+                            limit.num_contracts = limit.num_contracts + num_contracts;
+                            let prev_order_id = limit.tail_order_id;
+                            let mut prev_order_struct = self.orders.read(prev_order_id);
+                            prev_order_struct.next_order_id = order_id;
+                            limit.tail_order_id = order_id;
+                            self.orders.write(prev_order_id, prev_order_struct);
+                            self.limits.write((market_id, premium), limit);
+                            if (next_order.num_contracts == 0) {
+
+                            }
+                        }
+                    } else {
+                        let mut market = self.markets.read(market_id);
+                        market.ask_limit = premium;
+                        self.markets.write(market_id, market)
+                    }
+                }
 
                 // TODO: update user account.
             } else {
