@@ -3,9 +3,8 @@ use starknet::ContractAddress;
 use napa::types::i256::i256;
 
 #[derive(Copy, Drop, Serde, starknet::Store)]
-struct Pair {
-    base_token: ContractAddress,
-    quote_token: ContractAddress,
+struct TokenInfo {
+    token: ContractAddress,
     strike_price_width: u256,
     expiry_width: u64,
     premium_width: u256,
@@ -14,7 +13,7 @@ struct Pair {
 
 #[derive(Copy, Drop, Serde, starknet::Store)]
 struct Market {
-    pair_id: felt252,
+    token: ContractAddress,
     is_call: bool,
     expiry_block: u64,
     strike_price: u256,

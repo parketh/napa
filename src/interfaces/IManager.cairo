@@ -1,6 +1,6 @@
 use core::zeroable::Zeroable;
 use starknet::ContractAddress;
-use napa::types::core::{Market, Pair, Order};
+use napa::types::core::{Market, TokenInfo, Order};
 
 #[starknet::interface]
 trait IManager<TContractState> {
@@ -11,7 +11,7 @@ trait IManager<TContractState> {
 
     fn get_market(self: @TContractState, market_id: felt252) -> Market;
 
-    fn get_pair(self: @TContractState, base_token: ContractAddress, quote_token: ContractAddress) -> Pair;
+    fn get_token_info(self: @TContractState, token: ContractAddress) -> TokenInfo;
 
     // fn get_oracle_price(self: @TContractState, oracle: ContractAddress) -> u256;
 
@@ -19,28 +19,21 @@ trait IManager<TContractState> {
     // EXTERNAL
     ////////////////////////////////
 
-    fn register_pair(
+    fn set_token(
         ref self: TContractState, 
-        base_token: ContractAddress, 
-        quote_token: ContractAddress, 
+        token: ContractAddress, 
         strike_price_width: u256,
         expiry_width: u64,
         premium_width: u256,
     );
 
-    fn update_pair(
-        ref self: TContractState, 
-        base_token: ContractAddress, 
-        quote_token: ContractAddress, 
-        strike_price_width: u256,
-        expiry_width: u64,
-        premium_width: u256
-    );
+    fn deposit(ref self: TContractState, amount: u256);
+
+    fn withdraw(ref self: TContractState, amount: u256);
 
     fn place(
         ref self: TContractState, 
-        base_token: ContractAddress,
-        quote_token: ContractAddress,
+        token: ContractAddress,
         is_call: bool,
         expiry_block: u64,
         strike_price: u256,

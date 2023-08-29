@@ -3,11 +3,12 @@ use core::zeroable::Zeroable;
 mod Manager {
 
     use starknet::ContractAddress;
-    use starknet::info::{get_block_timestamp, get_caller_address};
+    use starknet::info::{get_block_timestamp, get_caller_address, get_contract_address};
 
     use napa::libraries::id;
     use napa::interfaces::IManager::IManager;
-    use napa::types::core::{Market, Pair, Order, Limit, Account};
+    use napa::interfaces::IERC20::{IERC20Dispatcher, IERC20DispatcherTrait};
+    use napa::types::core::{Market, TokenInfo, Order, Limit, Account};
 
     ////////////////////////////////
     // STORAGE
@@ -15,10 +16,15 @@ mod Manager {
 
     #[storage]
     struct Storage {
-        // Indexed by pair_id = hash(base_token, quote_token)
-        pairs: LegacyMap::<felt252, Pair>,
-        // Indexed by (user: ContractAddress, asset: ContractAddress)
-        accounts: LegacyMap::<(ContractAddress, ContractAddress), Account>,
+        // IMMUTABLE
+        usdc_address: ContractAddress, // currently only supports 1 collateral type
+
+        // MUTABLE
+
+        // Indexed by token address
+        token_info: LegacyMap::<ContractAddress, TokenInfo>,
+        // Indexed by user
+        accounts: LegacyMap::<ContractAddress, Account>,
         // Indexed by market_id = hash(pair_id, is_call, expiry, price)
         markets: LegacyMap::<felt252, Market>,
         // Indexed by (market_id, limit)
@@ -35,28 +41,35 @@ mod Manager {
     #[event]
     #[derive(Drop, starknet::Event)]
     enum Event {
-        RegisterPair: RegisterPair,
-        ChangeWidths: ChangeWidths,
+        SetToken: SetToken,
+        Deposit: Deposit,
+        Withdraw: Withdraw,
     }
 
     #[derive(Drop, starknet::Event)]
-    struct RegisterPair {
-        base_token: ContractAddress,
-        quote_token: ContractAddress,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    struct ChangeWidths {
-        base_token: ContractAddress,
-        quote_token: ContractAddress,
+    struct SetToken {
+        token: ContractAddress,
         strike_price_width: u256,
         expiry_width: u64,
         premium_width: u256,
     }
 
+    #[derive(Drop, starknet::Event)]
+    struct Deposit {
+        user: ContractAddress,
+        amount: u256,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    struct Withdraw {
+        user: ContractAddress,
+        amount: u256,
+    }
+
     #[constructor]
-    fn constructor(ref self: ContractState) {
+    fn constructor(ref self: ContractState, usdc_address: ContractAddress) {
         self.next_order_id.write(1);
+        self.usdc_address.write(usdc_address);
     }
 
     #[external(v0)]
@@ -70,8 +83,8 @@ mod Manager {
             self.markets.read(market_id)
         }
 
-        fn get_pair(self: @ContractState, base_token: ContractAddress, quote_token: ContractAddress) -> Pair {
-            self.pairs.read(id::pair_id(base_token, quote_token))
+        fn get_token_info(self: @ContractState, token: ContractAddress) -> TokenInfo {
+            self.token_info.read(token)
         }
 
         // fn get_oracle_price(self: @ContractState, oracle: ContractAddress) -> u256 {
@@ -82,57 +95,62 @@ mod Manager {
         // EXTERNAL
         ////////////////////////////////
 
-        // Registers a new pair.
+        // Registers a new token or updates its parameters.
         // 
         // # Arguments
         //
-        // * `base_token` - base token of the pair
-        // * `quote_token` - quote token of the pair
-        // * `width` - width of the pair
-        fn register_pair(
+        // * `token` - token
+        // * `strike_price_width` - width of the pair
+        // * `expiry_width` - width of the pair
+        // * `premium_width` - width of the pair
+        fn set_token(
             ref self: ContractState, 
-            base_token: ContractAddress, 
-            quote_token: ContractAddress, 
+            token: ContractAddress, 
             strike_price_width: u256,
             expiry_width: u64,
             premium_width: u256,
         ) {
-            let pair_id = id::pair_id(base_token, quote_token);
-            self.pairs.write(
-                pair_id, Pair { base_token, quote_token, strike_price_width, expiry_width, premium_width }
-            );
-            self.emit(Event::RegisterPair(RegisterPair { base_token, quote_token }));
-            self.emit(
-                Event::ChangeWidths(
-                    ChangeWidths { base_token, quote_token, strike_price_width, expiry_width, premium_width }
-                )
-            );
+            self.token_info.write(token, TokenInfo { token, strike_price_width, expiry_width, premium_width });
+            self.emit(Event::SetToken(SetToken { token, strike_price_width, expiry_width, premium_width }));
         }
 
-        // Updates the width of a pair.
+        // Deposits funds into the contract.
         //
         // # Arguments
+        // * `amount` - amount to deposit
+        fn deposit(ref self: ContractState, amount: u256) {
+            assert(amount > 0, 'DepositAmountZero');
+
+            let usdc_address = self.usdc_address.read();
+            let caller = get_caller_address();
+
+            IERC20Dispatcher{ contract_address: usdc_address }.transfer_from(caller, get_contract_address(), amount);
+
+            let mut account = self.accounts.read(caller);
+            account.balance += amount;
+            self.accounts.write(caller, account);
+
+            self.emit(Event::Deposit(Deposit { user: caller, amount }));
+        }
+
+        // Withdraws funds from the contract.
         //
-        // * `base_token` - base token of the pair
-        // * `quote_token` - quote token of the pair
-        // * `width` - new width of the pair
-        fn update_pair(
-            ref self: ContractState, 
-            base_token: ContractAddress, 
-            quote_token: ContractAddress, 
-            strike_price_width: u256,
-            expiry_width: u64,
-            premium_width: u256,
-        ) {
-            let pair_id = id::pair_id(base_token, quote_token);
-            self.pairs.write(
-                pair_id, Pair { base_token, quote_token, strike_price_width, expiry_width, premium_width }
-            );
-            self.emit(
-                Event::ChangeWidths(
-                    ChangeWidths { base_token, quote_token, strike_price_width, expiry_width, premium_width }
-                )
-            );
+        // # Arguments
+        // * `amount` - amount to withdraw
+        fn withdraw(ref self: ContractState, amount: u256) {
+            assert(amount > 0, 'WithdrawAmountZero');
+
+            let usdc_address = self.usdc_address.read();
+            let caller = get_caller_address();
+
+            let mut account = self.accounts.read(caller);
+            assert(account.balance >= amount, 'InsufficientBalance');
+            account.balance -= amount;
+            self.accounts.write(caller, account);
+
+            IERC20Dispatcher{ contract_address: usdc_address }.transfer(caller, amount);
+
+            self.emit(Event::Withdraw(Withdraw { user: caller, amount }));
         }
 
         // Place a new order.
@@ -140,8 +158,7 @@ mod Manager {
         // is above lowest ask, place aslimit order. Otherwise, fill as market order.
         //
         // # Arguments
-        // * `base_token` - base token of the pair
-        // * `quote_token` - quote token of the pair
+        // * `token` - underlying token
         // * `is_call` - true if call option, false if put option
         // * `expiry_block` - expiry block of the option
         // * `price` - strike price of the option
@@ -154,8 +171,7 @@ mod Manager {
         // * `is_limit` - true if order is limit, false if it fills an existing order
         fn place(
             ref self: ContractState, 
-            base_token: ContractAddress,
-            quote_token: ContractAddress,
+            token: ContractAddress,
             is_call: bool,
             expiry_block: u64,
             strike_price: u256,
@@ -164,26 +180,24 @@ mod Manager {
             num_contracts: u32,
         ) -> (felt252, bool) {
             // Check pair is registered.
-            let pair_id = id::pair_id(base_token, quote_token);
-            let pair = self.pairs.read(pair_id);
-            assert(pair.base_token.is_non_zero(), 'PairNotRegistered');
+            assert(token.is_non_zero(), 'TokenZero');
+            let token_info = self.token_info.read(token);
+            assert(token_info.token.is_non_zero(), 'TokenNotRegistered');
 
             // Validate inputs.
-            assert(base_token.is_non_zero(), 'BaseTokenZero');
-            assert(quote_token.is_non_zero(), 'QuoteTokenZero');
             assert(expiry_block > get_block_timestamp(), 'Expired');
-            assert(expiry_block % pair.expiry_width == 0, 'ExpiryInvalid');
-            assert(strike_price != 0 && strike_price % pair.strike_price_width == 0, 'StrikePriceInvalid');
-            assert(premium > 0 && premium % pair.premium_width == 0, 'PremiumInvalid');
+            assert(expiry_block % token_info.expiry_width == 0, 'ExpiryInvalid');
+            assert(strike_price != 0 && strike_price % token_info.strike_price_width == 0, 'StrikePriceInvalid');
+            assert(premium > 0 && premium % token_info.premium_width == 0, 'PremiumInvalid');
 
             // Check if market exists. If it doesn't, create it.
             let order_id = self.next_order_id.read();
-            let market_id = id::market_id(pair_id, is_call, expiry_block, strike_price);
+            let market_id = id::market_id(token, is_call, expiry_block, strike_price);
             let mut market = self.markets.read(market_id);
-            let is_new = market.pair_id.is_zero();
+            let is_new = market.token.is_zero();
             if is_new {
                 market = Market {
-                    pair_id,
+                    token,
                     is_call,
                     expiry_block,
                     strike_price,
