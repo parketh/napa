@@ -4,6 +4,9 @@ use starknet::ContractAddress;
 struct Pair {
     base_token: ContractAddress,
     quote_token: ContractAddress,
+    strike_price_width: u256,
+    expiry_width: u64,
+    premium_width: u256,
     // oracle: ContractAddress,
 }
 
@@ -11,17 +14,16 @@ struct Pair {
 struct Market {
     pair_id: felt252,
     is_call: bool,
-    expiry: u64,
+    expiry_block: u64,
     strike_price: u256,
-    width: u256,
-    bid_tick: u256,
-    ask_tick: u256,
+    bid_limit: u256,
+    ask_limit: u256,
 }
 
 #[derive(Copy, Drop, Serde, starknet::Store)]
 struct Limit {
-    higher_tick: u256,
-    lower_tick: u256,
+    prev_limit: u256,
+    next_limit: u256,
     amount: u256,
     head_order_id: felt252,
     tail_order_id: felt252,
@@ -29,9 +31,9 @@ struct Limit {
 
 #[derive(Copy, Drop, Serde, starknet::Store)]
 struct Order {
-    market_id: felt252,
     owner: ContractAddress,
-    is_bid: bool,
+    market_id: felt252,
+    is_buy: bool,
     amount: u256,
     premium: u256,
     fill_id: felt252,
@@ -39,7 +41,7 @@ struct Order {
 
 #[derive(Copy, Drop, Serde, starknet::Store)]
 struct Fill {
-    order_id: felt252,
     owner: ContractAddress,
+    order_id: felt252,
 }
 
