@@ -1,6 +1,6 @@
 use core::zeroable::Zeroable;
 use starknet::ContractAddress;
-use napa::types::{Market, Pair, Order};
+use napa::types::core::{Market, Pair, Order};
 
 #[starknet::interface]
 trait IManager<TContractState> {
@@ -8,8 +8,6 @@ trait IManager<TContractState> {
     ////////////////////////////////
     // VIEW
     ////////////////////////////////
-
-    fn get_balance(self: @TContractState, user: ContractAddress, asset: ContractAddress) -> u256;
 
     fn get_market(self: @TContractState, market_id: felt252) -> Market;
 
@@ -59,9 +57,12 @@ trait IManager<TContractState> {
 
     // fn withdraw(ref self: TContractState, );
 
-    // fn update(ref self: TContractState, );
+    fn update(ref self: TContractState, order_id: felt252);
+
+    // fn collect(ref self: TContractState, );
 
     // fn liquidate(ref self: TContractState, );
+
 
     // TEMP
 

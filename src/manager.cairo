@@ -7,7 +7,7 @@ mod Manager {
 
     use napa::libraries::id;
     use napa::interfaces::IManager::IManager;
-    use napa::types::{Market, Pair, Order, Fill, Limit};
+    use napa::types::core::{Market, Pair, Order, Fill, Limit, Account};
 
     ////////////////////////////////
     // STORAGE
@@ -18,7 +18,7 @@ mod Manager {
         // Indexed by pair_id = hash(base_token, quote_token)
         pairs: LegacyMap::<felt252, Pair>,
         // Indexed by (user: ContractAddress, asset: ContractAddress)
-        balances: LegacyMap::<(ContractAddress, ContractAddress), u256>,
+        accounts: LegacyMap::<(ContractAddress, ContractAddress), Account>,
         // Indexed by market_id = hash(pair_id, is_call, expiry, price)
         markets: LegacyMap::<felt252, Market>,
         // Indexed by (market_id, limit)
@@ -69,10 +69,6 @@ mod Manager {
         ////////////////////////////////
         // VIEW
         ////////////////////////////////
-
-        fn get_balance(self: @ContractState, user: ContractAddress, asset: ContractAddress) -> u256 {
-            self.balances.read((user, asset))
-        }
 
         fn get_market(self: @ContractState, market_id: felt252) -> Market {
             self.markets.read(market_id)
@@ -246,7 +242,12 @@ mod Manager {
                 // Return fill id.
                 (fill_id, false)
             }
-        }   
+        }
+
+        // Updates an order for a 
+        fn update(ref self: ContractState, order_id: felt252) {
+
+        }
 
 
 
