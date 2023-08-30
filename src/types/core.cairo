@@ -9,7 +9,6 @@ struct TokenInfo {
     expiry_width: u64,
     premium_width: u256,
     min_collateral_ratio: u16,
-    init_collateral_ratio: u16,
 }
 
 #[derive(Copy, Drop, Serde, starknet::Store)]

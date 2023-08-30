@@ -43,6 +43,7 @@ trait IManager<TContractState> {
         is_buy: bool,
         premium: u256,
         num_contracts: u32,
+        margin: u256,
         prev_limit: u256,
         next_limit: u256,
     ) -> felt252;
@@ -55,7 +56,7 @@ trait IManager<TContractState> {
         strike_price: u256,
         is_buy: bool,
         num_contracts: u32,
-    ) -> (felt252, u256);
+    ) -> (felt252, u32);
 
     // fn cancel_limit(ref self: TContractState, order_id: felt252);
 

@@ -64,7 +64,6 @@ use core::zeroable::Zeroable;
         expiry_width: u64,
         premium_width: u256,
         min_collateral_ratio: u16,
-        init_collateral_ratio: u16,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -143,14 +142,13 @@ use core::zeroable::Zeroable;
             assert(expiry_width > 0, 'ExpiryWidthZero');
             assert(premium_width > 0, 'PremiumWidthZero');
             assert(min_collateral_ratio >= 1000, 'MinColRatioUnderflow');
-            assert(init_collateral_ratio >= min_collateral_ratio, 'InitColRatioUnderflow');
             
             self.token_info.write(token, TokenInfo { 
-                token, strike_price_width, expiry_width, premium_width, min_collateral_ratio, init_collateral_ratio
+                token, strike_price_width, expiry_width, premium_width, min_collateral_ratio
             });
             self.emit(Event::SetToken(
                 SetToken { 
-                    token, strike_price_width, expiry_width, premium_width, min_collateral_ratio, init_collateral_ratio
+                    token, strike_price_width, expiry_width, premium_width, min_collateral_ratio
                 }
             ));
         }
@@ -204,6 +202,7 @@ use core::zeroable::Zeroable;
         // * `is_buy` - true if buy order, false if sell order
         // * `premium` - premium (or price) of the option
         // * `num_contracts` - order size in number of contracts
+        // * `margin` - margin to post for the order
         // * `prev_limit` - manual entry of previous limit price
         // * `next_limit` - manual entry of next limit price
         //
@@ -218,6 +217,7 @@ use core::zeroable::Zeroable;
             is_buy: bool,
             premium: u256,
             num_contracts: u32,
+            margin: u256,
             prev_limit: u256,
             next_limit: u256
         ) -> felt252 {
@@ -242,10 +242,13 @@ use core::zeroable::Zeroable;
                 };
             }
 
-            // Check sufficient account balance to post margin, debit from account.
+            // Check margin exceeds minimum, and sufficient account balance to post margin.
             let caller = get_caller_address();
             let mut account = self.accounts.read(caller);
-            let margin = mul_div(num_contracts.into() * premium, token_info.init_collateral_ratio.into(), 1000, true);
+            assert(
+                margin >= mul_div(num_contracts.into() * premium, token_info.min_collateral_ratio.into(), 1000, true),
+                'MarginInsufficient'
+            );
             account.balance -= margin;
 
             // Check order is limit order.
@@ -337,7 +340,7 @@ use core::zeroable::Zeroable;
             strike_price: u256,
             is_buy: bool,
             num_contracts: u32,
-        ) -> (felt252, u256) {
+        ) -> (felt252, u32) {
             // Validate inputs.
             self.before_place(token, is_call, expiry_date, strike_price);
 
@@ -348,21 +351,63 @@ use core::zeroable::Zeroable;
             assert(market.token.is_non_zero(), 'MarketNotExists');
 
             // Fetch next eligible order from order book.
-            let next_limit = if is_buy { 
+            let mut next_limit = if is_buy { 
                 self.limits.read((market_id, market.ask_limit))
             } else { 
                 self.limits.read((market_id, market.bid_limit))
             };
-            let next_order = self.orders.read(next_limit.head_order_id);
+            let mut next_order = self.orders.read(next_limit.head_order_id);
 
             // Fill amount and update balances.
             let capped_num_contracts = min(num_contracts, next_order.num_contracts - next_order.filled_contracts);
-            let margin = if is_buy {
-                capped_num_contracts * next_order.premium.into()
-            } else {
-                // TODO
-            };
+            let margin = if is_buy { capped_num_contracts.into() * next_order.premium } else { 0 };
 
+            // Create new order.
+            let order_id = self.next_order_id.read();
+            let caller = get_caller_address();
+            let order = Order {
+                next_order_id: 0,
+                owner: caller,
+                market_id,
+                is_buy,
+                premium: next_order.premium,
+                num_contracts: capped_num_contracts,
+                filled_contracts: capped_num_contracts,
+                margin,
+                settled: false,
+            };
+            self.orders.write(order_id, order);
+
+            // Update account.
+            let mut account = self.accounts.read(caller);
+            account.balance -= margin;
+            account.order_id = order_id;
+            self.accounts.write(caller, account);
+
+            // Update order book.
+            if capped_num_contracts < num_contracts {
+                next_order.filled_contracts += capped_num_contracts;
+            } else {
+                // Remove opposing order from order book.
+                next_limit.head_order_id = next_order.next_order_id;
+                if next_limit.head_order_id == 0 {
+                    next_limit.tail_order_id = 0;
+                }
+                // Update order book.
+                if next_limit.head_order_id == 0 {
+                    next_limit.tail_order_id = 0;
+                }
+                // Update market.
+                if is_buy { market.ask_limit = next_limit.next_limit; }
+                else { market.bid_limit = next_limit.prev_limit; }
+            }
+
+            // Commit state updates.
+            self.limits.write((market_id, next_order.premium), next_limit);
+            self.orders.write(next_order.next_order_id, next_order);
+
+            // Return order id and filled amount.
+            (order_id, capped_num_contracts)
         }
 
         // Updates account profit and loss based on latest mark price.
