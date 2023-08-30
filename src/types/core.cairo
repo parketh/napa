@@ -25,7 +25,7 @@ struct Market {
 struct Limit {
     prev_limit: u256,
     next_limit: u256,
-    num_contracts: u256,
+    num_contracts: u32,
     head_order_id: felt252,
     tail_order_id: felt252,
 }
@@ -39,6 +39,7 @@ struct Order {
     num_contracts: u32,
     filled_contracts: u32,
     margin: u256,
+    next_order_id: felt252,
     settled: bool,
 }
 
