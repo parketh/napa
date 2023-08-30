@@ -251,44 +251,48 @@ mod Manager {
                 self.orders.write(order_id, order);
 
                 // TODO: insert order into order book of market.
-                if is_buy {
-                    if (self.markets.read(market_id).ask_limit > premium) {
-                        let mut limit = self.limits.read((market_id, premium));
-                        if (limit.num_contracts == 0) {
-                            let prev_limit_struct = self.limits.read((market_id, prev_limit));
-                            let next_limit_struct = self.limits.read((market_id, prev_limit));
-                            let next_limit_from_prev_limit_struct = self.limits.read((market_id, prev_limit_struct.next_limit));
-                            let prev_limit_from_next_limit_struct = self.limits.read((market_id, next_limit_struct.prev_limit));
-                            assert(prev_limit_struct.next_limit == 0 || next_limit_from_prev_limit_struct.num_contracts == 0, 'prev_order_idNotFound');
-                            assert(next_limit_struct.num_contracts == 0, 'next_order_idNotFound');
-                            let current_limit_struct = Limit {
-                                prev_limit,
-                                next_limit,
-                                num_contracts,
-                                head_order_id: order_id,
-                                tail_order_id: order_id,
-                            };
-                            self.limits.write((market_id, premium), current_limit_struct);
-                        } else {
-                            limit.num_contracts = limit.num_contracts + num_contracts;
-                            let prev_order_id = limit.tail_order_id;
-                            let mut prev_order_struct = self.orders.read(prev_order_id);
-                            prev_order_struct.next_order_id = order_id;
-                            limit.tail_order_id = order_id;
-                            self.orders.write(prev_order_id, prev_order_struct);
-                            self.limits.write((market_id, premium), limit);
-                            if (next_order.num_contracts == 0) {
+                // case: not better buy price than market's ask_limit
+                if (self.markets.read(market_id).ask_limit > premium) {
+                    // update market ask_limit
+                    let mut market = self.markets.read(market_id);
+                    market.ask_limit = premium;
+                    self.markets.write(market_id, market);
+                }
 
-                            }
-                        }
-                    } else {
-                        let mut market = self.markets.read(market_id);
-                        market.ask_limit = premium;
-                        self.markets.write(market_id, market)
-                    }
+                let mut limit = self.limits.read((market_id, premium));
+                // case: limit of this premium price level doesn't exist, need create limit + update limit's prev and next
+                if (limit.num_contracts == 0) {
+                    let prev_limit_struct = self.limits.read((market_id, prev_limit));
+                    let next_limit_struct = self.limits.read((market_id, prev_limit));
+                    let next_limit_from_prev_limit_struct = self.limits.read((market_id, prev_limit_struct.next_limit));
+                    let prev_limit_from_next_limit_struct = self.limits.read((market_id, next_limit_struct.prev_limit));
+                    assert(prev_limit_struct.next_limit == 0 || next_limit_from_prev_limit_struct.num_contracts == 0, 'prev_order_idNotFound');
+                    assert(next_limit_struct.num_contracts == 0, 'next_order_idNotFound');
+                    let current_limit_struct = Limit {
+                        prev_limit,
+                        next_limit,
+                        num_contracts,
+                        head_order_id: order_id,
+                        tail_order_id: order_id,
+                    };
+                    self.limits.write((market_id, premium), current_limit_struct);
+                // case: limit of this premium level exists + update existing limit's order linked list's last element
+                } else {
+                    limit.num_contracts = limit.num_contracts + num_contracts;
+                    let prev_order_id = limit.tail_order_id;
+                    let mut prev_order_struct = self.orders.read(prev_order_id);
+                    prev_order_struct.next_order_id = order_id;
+                    limit.tail_order_id = order_id;
+                    self.orders.write(prev_order_id, prev_order_struct);
+                    self.limits.write((market_id, premium), limit);
                 }
 
                 // TODO: update user account.
+
+                let mut account = self.accounts.read(get_caller_address());
+                account.order_id = order_id;
+                // self.accounts.write()
+
             } else {
                 // TODO: write logic to fetch next eligible order from order book and update it.
 
