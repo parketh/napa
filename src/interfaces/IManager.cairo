@@ -27,13 +27,14 @@ trait IManager<TContractState> {
         expiry_width: u64,
         premium_width: u256,
         min_collateral_ratio: u16,
+        init_collateral_ratio: u16,
     );
 
     fn deposit(ref self: TContractState, amount: u256);
 
     fn withdraw(ref self: TContractState, amount: u256);
 
-    fn place(
+    fn place_limit(
         ref self: TContractState, 
         token: ContractAddress,
         is_call: bool,
@@ -42,10 +43,21 @@ trait IManager<TContractState> {
         is_buy: bool,
         premium: u256,
         num_contracts: u32,
-        margin: u256,
-    ) -> (felt252, bool);
+        prev_limit: u256,
+        next_limit: u256,
+    ) -> felt252;
 
-    // fn cancel(ref self: TContractState, order_id: felt252);
+    fn place_market(
+        ref self: TContractState, 
+        token: ContractAddress,
+        is_call: bool,
+        expiry_date: u64,
+        strike_price: u256,
+        is_buy: bool,
+        num_contracts: u32,
+    ) -> (felt252, u256);
+
+    // fn cancel_limit(ref self: TContractState, order_id: felt252);
 
     fn update(ref self: TContractState, user: ContractAddress) -> i256;
 

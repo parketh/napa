@@ -1,10 +1,11 @@
 #[starknet::contract]
 mod Manager {
 
-    use core::zeroable::Zeroable;
+    use core::traits::Into;
+use core::zeroable::Zeroable;
     use starknet::ContractAddress;
     use starknet::info::{get_block_timestamp, get_caller_address, get_contract_address};
-    use cmp::max;
+    use cmp::{min, max};
 
     use napa::libraries::id;
     use napa::libraries::position;
@@ -63,6 +64,7 @@ mod Manager {
         expiry_width: u64,
         premium_width: u256,
         min_collateral_ratio: u16,
+        init_collateral_ratio: u16,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -126,6 +128,7 @@ mod Manager {
         // * `expiry_width` - valid interval for expiry date
         // * `premium_width` - price interval for premium
         // * `min_collateral_ratio` - minimum collateral ratio
+        // * `init_collateral_ratio` - initial collateral ratio
         fn set_token(
             ref self: ContractState, 
             token: ContractAddress, 
@@ -133,18 +136,22 @@ mod Manager {
             expiry_width: u64,
             premium_width: u256,
             min_collateral_ratio: u16,
+            init_collateral_ratio: u16,
         ) {
             // Validate inputs.
             assert(strike_price_width > 0, 'StrikePriceWidthZero');
             assert(expiry_width > 0, 'ExpiryWidthZero');
             assert(premium_width > 0, 'PremiumWidthZero');
             assert(min_collateral_ratio >= 1000, 'MinColRatioUnderflow');
+            assert(init_collateral_ratio >= min_collateral_ratio, 'InitColRatioUnderflow');
             
             self.token_info.write(token, TokenInfo { 
-                token, strike_price_width, expiry_width, premium_width, min_collateral_ratio
+                token, strike_price_width, expiry_width, premium_width, min_collateral_ratio, init_collateral_ratio
             });
             self.emit(Event::SetToken(
-                SetToken { token, strike_price_width, expiry_width, premium_width, min_collateral_ratio }
+                SetToken { 
+                    token, strike_price_width, expiry_width, premium_width, min_collateral_ratio, init_collateral_ratio
+                }
             ));
         }
 
@@ -187,9 +194,7 @@ mod Manager {
             self.emit(Event::Withdraw(Withdraw { user: caller, amount }));
         }
 
-        // Place a new order.
-        // If option buyer and premium is below highest bid or option seller and premium 
-        // is above lowest ask, place as limit order. Otherwise, fill as market order.
+        // Place a new limit order.
         //
         // # Arguments
         // * `token` - underlying token
@@ -199,11 +204,12 @@ mod Manager {
         // * `is_buy` - true if buy order, false if sell order
         // * `premium` - premium (or price) of the option
         // * `num_contracts` - order size in number of contracts
+        // * `prev_limit` - manual entry of previous limit price
+        // * `next_limit` - manual entry of next limit price
         //
         // # Returns
-        // * `order_id` / `fill_id` - id of the order or fill
-        // * `is_limit` - true if order is limit, false if it fills an existing order
-        fn place(
+        // * `order_id` - id of the order or fill
+        fn place_limit(
             ref self: ContractState, 
             token: ContractAddress,
             is_call: bool,
@@ -213,23 +219,12 @@ mod Manager {
             premium: u256,
             num_contracts: u32,
             prev_limit: u256,
-            next_limit: u256,
-            margin: u256,
-        ) -> (felt252, bool) {
-            // Check pair is registered.
-            assert(token.is_non_zero(), 'TokenZero');
-            let token_info = self.token_info.read(token);
-            assert(token_info.token.is_non_zero(), 'TokenNotRegistered');
-
+            next_limit: u256
+        ) -> felt252 {
             // Validate inputs.
-            assert(expiry_date > get_block_timestamp(), 'Expired');
-            assert(expiry_date % token_info.expiry_width == 0, 'ExpiryInvalid');
-            assert(strike_price != 0 && strike_price % token_info.strike_price_width == 0, 'StrikePriceInvalid');
+            self.before_place(token, is_call, expiry_date, strike_price);
+            let token_info = self.token_info.read(token);
             assert(premium > 0 && premium % token_info.premium_width == 0, 'PremiumInvalid');
-            assert(
-                margin > mul_div(premium * num_contracts.into(), token_info.min_collateral_ratio.into(), 1000, false), 
-                'CollRatioTooLow'
-            );
 
             // Check if market exists. If it doesn't, create it.
             let order_id = self.next_order_id.read();
@@ -245,88 +240,129 @@ mod Manager {
                     bid_limit: premium,
                     ask_limit: premium,
                 };
-                self.markets.write(market_id, market);
             }
 
-            // Check if order is limit or market.
-            let is_limit_order = is_new || (
-                is_buy && premium < market.ask_limit || !is_buy && premium > market.bid_limit
+            // Check sufficient account balance to post margin, debit from account.
+            let caller = get_caller_address();
+            let mut account = self.accounts.read(caller);
+            let margin = mul_div(num_contracts.into() * premium, token_info.init_collateral_ratio.into(), 1000, true);
+            account.balance -= margin;
+
+            // Check order is limit order.
+            assert(
+                is_new || (is_buy && premium < market.ask_limit || !is_buy && premium > market.bid_limit), 
+                'NotLimitOrder'
             );
-            if is_limit_order {
-                // Create order.
-                let order = Order {
-                    owner: get_caller_address(),
-                    market_id,
-                    is_buy,
-                    premium,
+
+            // Create order.
+            let order = Order {
+                next_order_id: 0,
+                owner: caller,
+                market_id,
+                is_buy,
+                premium,
+                num_contracts,
+                filled_contracts: 0,
+                margin,
+                settled: false,
+            };
+            account.order_id = order_id;
+            self.orders.write(order_id, order);
+
+            // Insert order into order book.
+            let mut limit = self.limits.read((market_id, premium));
+            // Case 1: limit doesn't exist, create it
+            if limit.num_contracts == 0 {
+                let mut prev_limit_struct = self.limits.read((market_id, prev_limit));
+                let mut next_limit_struct = self.limits.read((market_id, next_limit));
+                assert(prev_limit_struct.next_limit == next_limit, 'NextLimitInvalid');
+                assert(next_limit_struct.prev_limit == prev_limit, 'PrevLimitInvalid');
+
+                limit = Limit {
+                    prev_limit,
+                    next_limit,
                     num_contracts,
-                    filled_contracts: 0,
-                    margin: num_contracts.into() * premium,
-                    next_order_id: order_id,
-                    settled: false,
+                    head_order_id: order_id,
+                    tail_order_id: order_id,
                 };
-                self.orders.write(order_id, order);
 
-                // TODO: insert order into order book of market.
-                // case: not better buy price than market's ask_limit
-                if (self.markets.read(market_id).ask_limit > premium) {
-                    // update market ask_limit
-                    let mut market = self.markets.read(market_id);
-                    market.ask_limit = premium;
-                    self.markets.write(market_id, market);
-                }
-
-                let mut limit = self.limits.read((market_id, premium));
-                // case: limit of this premium price level doesn't exist, need create limit + update limit's prev and next
-                if (limit.num_contracts == 0) {
-                    let mut prev_limit_struct = self.limits.read((market_id, prev_limit));
-                    let mut next_limit_struct = self.limits.read((market_id, prev_limit));
-                    let next_limit_from_prev_limit_struct = self.limits.read((market_id, prev_limit_struct.next_limit));
-                    let prev_limit_from_next_limit_struct = self.limits.read((market_id, next_limit_struct.prev_limit));
-                    assert(prev_limit_struct.next_limit == next_limit, 'prev_order_idNotFound');
-                    assert(next_limit_struct.prev_limit == prev_limit, 'next_order_idNotFound');
-
-                    let current_limit_struct = Limit {
-                        prev_limit,
-                        next_limit,
-                        num_contracts,
-                        head_order_id: order_id,
-                        tail_order_id: order_id,
-                    };
-                    self.limits.write((market_id, premium), current_limit_struct);
-
-                // case: limit of this premium level exists + update existing limit's order linked list's last element
-                } else {
-                    limit.num_contracts = limit.num_contracts + num_contracts;
-                    let prev_order_id = limit.tail_order_id;
-                    let mut prev_order_struct = self.orders.read(prev_order_id);
-                    prev_order_struct.next_order_id = order_id;
-                    limit.tail_order_id = order_id;
-                    self.orders.write(prev_order_id, prev_order_struct);
-                    self.limits.write((market_id, premium), limit);
-                }
-
-                // TODO: update user account.
-                let mut account = self.accounts.read(get_caller_address());
-                account.order_id = order_id;
-                self.accounts.write(get_caller_address(),account);
-            } else {
-                // TODO: write logic to fetch next eligible order from order book and update it.
-                let mut market = self.markets.read(market_id);
-                market.ask_limit = premium;
-                self.markets.write(market_id, market)
-
-
-                // TODO: Fill order.
-
-                // TODO: update user account.
+                prev_limit_struct.next_limit = premium;
+                next_limit_struct.prev_limit = premium;
+                self.limits.write((market_id, prev_limit), prev_limit_struct);
+                self.limits.write((market_id, next_limit), next_limit_struct);
+            }
+            // Case 2: limit exists, update it
+            else {
+                limit.num_contracts += num_contracts;
+                let prev_order_id = limit.tail_order_id;
+                let mut prev_order = self.orders.read(prev_order_id);
+                prev_order.next_order_id = order_id;
+                limit.tail_order_id = order_id;
+                self.orders.write(prev_order_id, prev_order);
             }
 
-            // Increment order id.
+            // If order is the new inside, update bid and/or ask limit.
+            if order.is_buy && premium > market.bid_limit { market.bid_limit = premium; }
+            if !order.is_buy && premium < market.ask_limit { market.ask_limit = premium; }
+
+            // Commit state updates.
+            self.limits.write((market_id, premium), limit);
+            self.accounts.write(get_caller_address(),account);
+            self.markets.write(market_id, market);
             self.next_order_id.write(order_id + 1);
 
             // Return order id.
-            (order_id, is_limit_order)
+            order_id
+        }
+
+        // Place a new market order.
+        // For now, only allows filling against a single limit order.
+        //
+        // # Arguments
+        // * `token` - underlying token
+        // * `is_call` - true if call option, false if put option
+        // * `expiry_date` - expiry block of the option
+        // * `strike_price` - strike price of the option
+        // * `is_buy` - true if buy order, false if sell order
+        // * `num_contracts` - order size in number of contracts
+        // 
+        // # Returns
+        // * `order_id` - id of the order or fill
+        // * `filled` - number of contracts filled
+        fn place_market(
+            ref self: ContractState, 
+            token: ContractAddress,
+            is_call: bool,
+            expiry_date: u64,
+            strike_price: u256,
+            is_buy: bool,
+            num_contracts: u32,
+        ) -> (felt252, u256) {
+            // Validate inputs.
+            self.before_place(token, is_call, expiry_date, strike_price);
+
+            // Check market exists.
+            let order_id = self.next_order_id.read();
+            let market_id = id::market_id(token, is_call, expiry_date, strike_price);
+            let mut market = self.markets.read(market_id);
+            assert(market.token.is_non_zero(), 'MarketNotExists');
+
+            // Fetch next eligible order from order book.
+            let next_limit = if is_buy { 
+                self.limits.read((market_id, market.ask_limit))
+            } else { 
+                self.limits.read((market_id, market.bid_limit))
+            };
+            let next_order = self.orders.read(next_limit.head_order_id);
+
+            // Fill amount and update balances.
+            let capped_num_contracts = min(num_contracts, next_order.num_contracts - next_order.filled_contracts);
+            let margin = if is_buy {
+                capped_num_contracts * next_order.premium.into()
+            } else {
+                // TODO
+            };
+
         }
 
         // Updates account profit and loss based on latest mark price.
@@ -469,6 +505,27 @@ mod Manager {
             self.oracle_price.write((token, timestamp), price);
         }
 
+    }
+
+    #[generate_trait]
+    impl InternalImpl of InternalTrait {
+        fn before_place(
+            ref self: ContractState,
+            token: ContractAddress,
+            is_call: bool,
+            expiry_date: u64,
+            strike_price: u256,
+        ) {
+            // Check pair is registered.
+            assert(token.is_non_zero(), 'TokenZero');
+            let token_info = self.token_info.read(token);
+            assert(token_info.token.is_non_zero(), 'TokenNotRegistered');
+
+            // Validate inputs.
+            assert(expiry_date > get_block_timestamp(), 'Expired');
+            assert(expiry_date % token_info.expiry_width == 0, 'ExpiryInvalid');
+            assert(strike_price != 0 && strike_price % token_info.strike_price_width == 0, 'StrikePriceInvalid');
+        }
     }
 
 }

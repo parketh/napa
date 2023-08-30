@@ -9,6 +9,7 @@ struct TokenInfo {
     expiry_width: u64,
     premium_width: u256,
     min_collateral_ratio: u16,
+    init_collateral_ratio: u16,
 }
 
 #[derive(Copy, Drop, Serde, starknet::Store)]
@@ -32,6 +33,7 @@ struct Limit {
 
 #[derive(Copy, Drop, Serde, starknet::Store)]
 struct Order {
+    next_order_id: felt252,
     owner: ContractAddress,
     market_id: felt252,
     is_buy: bool,
@@ -39,7 +41,6 @@ struct Order {
     num_contracts: u32,
     filled_contracts: u32,
     margin: u256,
-    next_order_id: felt252,
     settled: bool,
 }
 
