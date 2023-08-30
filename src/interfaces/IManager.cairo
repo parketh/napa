@@ -26,7 +26,6 @@ trait IManager<TContractState> {
         strike_price_width: u256,
         expiry_width: u64,
         premium_width: u256,
-        liquidation_discount: u16,
         min_collateral_ratio: u16,
     );
 
@@ -38,20 +37,23 @@ trait IManager<TContractState> {
         ref self: TContractState, 
         token: ContractAddress,
         is_call: bool,
-        expiry_block: u64,
+        expiry_date: u64,
         strike_price: u256,
         is_buy: bool,
         premium: u256,
         num_contracts: u32,
+        margin: u256,
     ) -> (felt252, bool);
 
     // fn cancel(ref self: TContractState, order_id: felt252);
 
     fn update(ref self: TContractState, user: ContractAddress) -> i256;
 
-    fn settle(ref self: TContractState, order_id: felt252);
+    fn settle(ref self: TContractState, user: ContractAddress);
 
-    fn liquidate(ref self: TContractState, user: ContractAddress, num_contracts: u32);
+    fn liquidate(ref self: TContractState, user: ContractAddress) -> bool;
+
+    fn transfer_owner(ref self: TContractState, new_owner: ContractAddress);
 
 
     ////////////////////////////////
