@@ -5,3 +5,13 @@ cairo-version = "2.2.0"
 
 [dependencies]
 starknet = "2.2.0"
+
+[lib]
+name = "manager"
+
+[[target.starknet-contract]]
+# Enable Sierra codegen.
+sierra = false
+
+# Enable CASM codegen.
+casm = true
