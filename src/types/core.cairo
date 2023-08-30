@@ -8,7 +8,6 @@ struct TokenInfo {
     strike_price_width: u256,
     expiry_width: u64,
     premium_width: u256,
-    liquidation_discount: u16,
     min_collateral_ratio: u16,
 }
 
@@ -16,7 +15,7 @@ struct TokenInfo {
 struct Market {
     token: ContractAddress,
     is_call: bool,
-    expiry_block: u64,
+    expiry_date: u64,
     strike_price: u256,
     bid_limit: u256,
     ask_limit: u256,
@@ -26,7 +25,7 @@ struct Market {
 struct Limit {
     prev_limit: u256,
     next_limit: u256,
-    amount: u256,
+    num_contracts: u256,
     head_order_id: felt252,
     tail_order_id: felt252,
 }
@@ -40,6 +39,7 @@ struct Order {
     num_contracts: u32,
     filled_contracts: u32,
     margin: u256,
+    settled: bool,
 }
 
 #[derive(Copy, Drop, Serde, starknet::Store)]
