@@ -262,12 +262,13 @@ mod Manager {
                 let mut limit = self.limits.read((market_id, premium));
                 // case: limit of this premium price level doesn't exist, need create limit + update limit's prev and next
                 if (limit.num_contracts == 0) {
-                    let prev_limit_struct = self.limits.read((market_id, prev_limit));
-                    let next_limit_struct = self.limits.read((market_id, prev_limit));
+                    let mut prev_limit_struct = self.limits.read((market_id, prev_limit));
+                    let mut next_limit_struct = self.limits.read((market_id, prev_limit));
                     let next_limit_from_prev_limit_struct = self.limits.read((market_id, prev_limit_struct.next_limit));
                     let prev_limit_from_next_limit_struct = self.limits.read((market_id, next_limit_struct.prev_limit));
-                    assert(prev_limit_struct.next_limit == 0 || next_limit_from_prev_limit_struct.num_contracts == 0, 'prev_order_idNotFound');
-                    assert(next_limit_struct.num_contracts == 0, 'next_order_idNotFound');
+                    assert(prev_limit_struct.next_limit == next_limit, 'prev_order_idNotFound');
+                    assert(next_limit_struct.prev_limit == prev_limit, 'next_order_idNotFound');
+
                     let current_limit_struct = Limit {
                         prev_limit,
                         next_limit,
@@ -276,6 +277,7 @@ mod Manager {
                         tail_order_id: order_id,
                     };
                     self.limits.write((market_id, premium), current_limit_struct);
+
                 // case: limit of this premium level exists + update existing limit's order linked list's last element
                 } else {
                     limit.num_contracts = limit.num_contracts + num_contracts;
@@ -288,13 +290,12 @@ mod Manager {
                 }
 
                 // TODO: update user account.
-
                 let mut account = self.accounts.read(get_caller_address());
                 account.order_id = order_id;
-                // self.accounts.write()
-
+                self.accounts.write(get_caller_address(),account);
             } else {
                 // TODO: write logic to fetch next eligible order from order book and update it.
+
 
                 // TODO: Fill order.
 
