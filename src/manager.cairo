@@ -396,7 +396,8 @@ mod Manager {
             } else { 
                 self.limits.read((market_id, market.bid_limit))
             };
-            let mut next_order = self.orders.read(next_limit.head_order_id);
+            let cached_next_order_id = next_limit.head_order_id;
+            let mut next_order = self.orders.read(cached_next_order_id);
 
             // Fill amount and update balances.
             let capped_num_contracts = min(num_contracts, next_order.num_contracts - next_order.filled_contracts);
@@ -424,10 +425,10 @@ mod Manager {
             account.order_id = order_id;
             self.accounts.write(caller, account);
 
-            // Update order book.
-            if capped_num_contracts < num_contracts {
-                next_order.filled_contracts += capped_num_contracts;
-            } else {
+            // Update opposing order and if necessary, unlink from orderbook.
+            next_order.filled_contracts += capped_num_contracts;
+            next_limit.num_contracts -= capped_num_contracts;
+            if capped_num_contracts >= num_contracts {
                 // Remove opposing order from order book.
                 next_limit.head_order_id = next_order.next_order_id;
                 if next_limit.head_order_id == 0 {
@@ -437,6 +438,18 @@ mod Manager {
                 if next_limit.head_order_id == 0 {
                     next_limit.tail_order_id = 0;
                 }
+                // Update limits.
+                if is_buy && next_limit.next_limit != 0 {
+                    let mut new_lowest_ask = self.limits.read((market_id, next_limit.next_limit));
+                    new_lowest_ask.prev_limit = 0;
+                    self.limits.write((market_id, next_limit.next_limit), new_lowest_ask);
+                }
+                if !is_buy && next_limit.prev_limit != 0 {
+                    let mut new_highest_bid = self.limits.read((market_id, next_limit.prev_limit));
+                    new_highest_bid.next_limit = 0;
+                    self.limits.write((market_id, next_limit.prev_limit), new_highest_bid);
+                }
+                
                 // Update market.
                 if is_buy { market.ask_limit = next_limit.next_limit; }
                 else { market.bid_limit = next_limit.prev_limit; }
@@ -444,7 +457,8 @@ mod Manager {
 
             // Commit state updates.
             self.limits.write((market_id, next_order.premium), next_limit);
-            self.orders.write(next_order.next_order_id, next_order);
+            self.orders.write(cached_next_order_id, next_order);
+            self.markets.write(market_id, market);
 
             // Return order id and filled amount.
             (order_id, capped_num_contracts)

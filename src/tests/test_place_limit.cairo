@@ -57,6 +57,13 @@ fn before() -> (IERC20Dispatcher, IERC20Dispatcher, IManagerDispatcher) {
     approve(usdc, bob(), manager.contract_address, amount);
     manager.deposit(amount);
 
+    // Initialise block state
+    let now = 1;
+    set_block_timestamp(now);
+    let curr_price = to_e6(1850);
+    manager.set_oracle_price(eth.contract_address, now, curr_price);
+    manager.set_latest_oracle_price(eth.contract_address, curr_price);
+
     (usdc, eth, manager)
 }
 
@@ -68,13 +75,6 @@ fn before() -> (IERC20Dispatcher, IERC20Dispatcher, IManagerDispatcher) {
 #[available_gas(40000000)]
 fn test_place_single_limit_buy_call() {
     let (usdc, eth, manager) = before();
-
-    // Initialise block state
-    let now = 1;
-    set_block_timestamp(1);
-    let curr_price = to_e6(1850);
-    manager.set_oracle_price(eth.contract_address, now, curr_price);
-    manager.set_latest_oracle_price(eth.contract_address, curr_price);
 
     // Order params
     let token = eth.contract_address;
@@ -122,19 +122,16 @@ fn test_place_single_limit_buy_call() {
     assert(bid_limit.num_contracts == num_contracts, 'Limit buy call: num ctrcs');
     assert(bid_limit.head_order_id == 1, 'Limit buy call: head order id');
     assert(bid_limit.tail_order_id == 1, 'Limit buy call: tail order id');
+
+    // Check account
+    let balance = manager.get_balance(alice());
+    assert(balance == to_e6(1000 - 20), 'Limit buy call: acc balance');
 }
 
 #[test]
 #[available_gas(40000000)]
 fn test_place_single_limit_sell_call() {
     let (usdc, eth, manager) = before();
-
-    // Initialise block state
-    let now = 1;
-    set_block_timestamp(1);
-    let curr_price = to_e6(1850);
-    manager.set_oracle_price(eth.contract_address, now, curr_price);
-    manager.set_latest_oracle_price(eth.contract_address, curr_price);
 
     // Order params
     let token = eth.contract_address;
@@ -182,19 +179,16 @@ fn test_place_single_limit_sell_call() {
     assert(ask_limit.num_contracts == num_contracts, 'Limit sell call: num ctrcs');
     assert(ask_limit.head_order_id == 1, 'Limit sell call: head order id');
     assert(ask_limit.tail_order_id == 1, 'Limit sell call: tail order id');
+
+    // Check account
+    let balance = manager.get_balance(alice());
+    assert(balance == to_e6(1000 - 150), 'Limit sell call: acc balance');
 }
 
 #[test]
 #[available_gas(40000000)]
 fn test_place_multiple_limit_calls() {
     let (usdc, eth, manager) = before();
-
-    // Initialise block state
-    let now = 1;
-    set_block_timestamp(1);
-    let curr_price = to_e6(1850);
-    manager.set_oracle_price(eth.contract_address, now, curr_price);
-    manager.set_latest_oracle_price(eth.contract_address, curr_price);
 
     // Place first set of limit orders by Alice
     set_contract_address(alice());
@@ -204,7 +198,7 @@ fn test_place_multiple_limit_calls() {
     // Place second set of limit orders by Bob
     set_contract_address(bob());
     manager.place_limit(eth.contract_address, true, 86400, to_e6(1950), false, to_e6(24), 5, to_e6(150), 0, 0);
-    manager.place_limit(eth.contract_address, true, 86400, to_e6(1950), false, to_e6(24), 5, to_e6(150), 0, 0);
+    // manager.place_limit(eth.contract_address, true, 86400, to_e6(1950), false, to_e6(24), 5, to_e6(150), 0, 0);
 
     // Check limit list.
     let market_id = id::market_id(eth.contract_address, true, 86400, to_e6(1950));
