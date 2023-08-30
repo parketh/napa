@@ -10,24 +10,31 @@ trait IManager<TContractState> {
     // VIEW
     ////////////////////////////////
 
+    fn owner(self: @TContractState) -> ContractAddress;
+
+    fn usdc_address(self: @TContractState) -> ContractAddress;
+
     fn get_market(self: @TContractState, market_id: felt252) -> Market;
 
     fn get_token_info(self: @TContractState, token: ContractAddress) -> TokenInfo;
 
     fn get_oracle_price(self: @TContractState, token: ContractAddress, timestamp: u64) -> u256;
 
+    fn get_balance(self: @TContractState, user: ContractAddress) -> u256;
+
+    fn next_order_id(self: @TContractState) -> felt252;
+
     ////////////////////////////////
     // EXTERNAL
     ////////////////////////////////
 
-    fn set_token(
+    fn set_token_params(
         ref self: TContractState, 
         token: ContractAddress, 
         strike_price_width: u256,
         expiry_width: u64,
         premium_width: u256,
         min_collateral_ratio: u16,
-        init_collateral_ratio: u16,
     );
 
     fn deposit(ref self: TContractState, amount: u256);

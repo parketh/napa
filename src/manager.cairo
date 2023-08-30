@@ -51,14 +51,14 @@ use core::zeroable::Zeroable;
     #[event]
     #[derive(Drop, starknet::Event)]
     enum Event {
-        SetToken: SetToken,
+        SetTokenParams: SetTokenParams,
         Deposit: Deposit,
         Withdraw: Withdraw,
         ChangeOwner: ChangeOwner,
     }
 
     #[derive(Drop, starknet::Event)]
-    struct SetToken {
+    struct SetTokenParams {
         token: ContractAddress,
         strike_price_width: u256,
         expiry_width: u64,
@@ -102,6 +102,14 @@ use core::zeroable::Zeroable;
         // VIEW
         ////////////////////////////////
 
+        fn owner(self: @ContractState) -> ContractAddress {
+            self.owner.read()
+        }
+
+        fn usdc_address(self: @ContractState) -> ContractAddress {
+            self.usdc_address.read()
+        }
+
         fn get_market(self: @ContractState, market_id: felt252) -> Market {
             self.markets.read(market_id)
         }
@@ -112,6 +120,14 @@ use core::zeroable::Zeroable;
 
         fn get_oracle_price(self: @ContractState, token: ContractAddress, timestamp: u64) -> u256 {
             self.oracle_price.read((token, timestamp))
+        }
+
+        fn get_balance(self: @ContractState, user: ContractAddress) -> u256 {
+            self.accounts.read(user).balance
+        }
+
+        fn next_order_id(self: @ContractState) -> felt252 {
+            self.next_order_id.read()
         }
 
         ////////////////////////////////
@@ -128,15 +144,17 @@ use core::zeroable::Zeroable;
         // * `premium_width` - price interval for premium
         // * `min_collateral_ratio` - minimum collateral ratio
         // * `init_collateral_ratio` - initial collateral ratio
-        fn set_token(
+        fn set_token_params(
             ref self: ContractState, 
             token: ContractAddress, 
             strike_price_width: u256,
             expiry_width: u64,
             premium_width: u256,
             min_collateral_ratio: u16,
-            init_collateral_ratio: u16,
         ) {
+            // Check caller.
+            assert(get_caller_address() == self.owner.read(), 'OnlyOwner');
+
             // Validate inputs.
             assert(strike_price_width > 0, 'StrikePriceWidthZero');
             assert(expiry_width > 0, 'ExpiryWidthZero');
@@ -146,8 +164,8 @@ use core::zeroable::Zeroable;
             self.token_info.write(token, TokenInfo { 
                 token, strike_price_width, expiry_width, premium_width, min_collateral_ratio
             });
-            self.emit(Event::SetToken(
-                SetToken { 
+            self.emit(Event::SetTokenParams(
+                SetTokenParams { 
                     token, strike_price_width, expiry_width, premium_width, min_collateral_ratio
                 }
             ));
