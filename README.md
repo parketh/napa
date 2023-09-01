@@ -1,7 +1,7 @@
 ![Group 1 (6)](https://github.com/parketh/napa/assets/27808560/bcffd1dc-6797-4b59-8e04-841768a8f3ce)
 
 # 🔆 𝐧𝐚𝐩𝐚
-Napa is an on-chain options order book protocol written in Cairo for the Starknet / Madara stack.
+Napa is an on-chain options derivative exchange protocol written in Cairo for the Starknet / Madara stack.
 
 It is deployed as an appchain via the Napa Madara appchain [repo](https://github.com/parketh/napa-appchain) for high throughput and gasless trading (e.g. free order placement and cancellation).
 
@@ -23,6 +23,8 @@ It allow option buyers and sellers to gain or reduce exposure to single-sided mo
 - `Call sellers`, who earn a premium in exchange for the obligation to pay out any price increases above a certain strike price
 - `Put buyers`, who are paid when the price of an underlying asset _falls_ below a certain strike price, in exchange for a premium
 - `Put sellers`, who earn a premium in exchange for the obligation to pay out any price reductions below a certain strike price
+
+Option buyers and sellers place limit and market orders on an on-chain order book to locate counterparties.
 
 ## Settlement, margin and liquidations
 
