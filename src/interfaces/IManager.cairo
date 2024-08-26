@@ -1,6 +1,6 @@
 use core::zeroable::Zeroable;
 use starknet::ContractAddress;
-use napa::types::core::{Market, TokenInfo, Order};
+use napa::types::core::{Market, TokenInfo, Order, Limit};
 use napa::types::i256::i256;
 
 #[starknet::interface]
@@ -16,9 +16,15 @@ trait IManager<TContractState> {
 
     fn get_market(self: @TContractState, market_id: felt252) -> Market;
 
+    fn get_order(self: @TContractState, order_id: felt252) -> Order;
+
+    fn get_limit(self: @TContractState, market_id: felt252, limit: u256) -> Limit;
+
     fn get_token_info(self: @TContractState, token: ContractAddress) -> TokenInfo;
 
     fn get_oracle_price(self: @TContractState, token: ContractAddress, timestamp: u64) -> u256;
+
+    fn get_latest_oracle_price(self: @TContractState, token: ContractAddress) -> u256;
 
     fn get_balance(self: @TContractState, user: ContractAddress) -> u256;
 
@@ -80,7 +86,7 @@ trait IManager<TContractState> {
     // TEMP
     ////////////////////////////////
 
-    fn update_oracle_price(ref self: TContractState, token: ContractAddress, timestamp: u64, price: u256);
+    fn set_oracle_price(ref self: TContractState, token: ContractAddress, timestamp: u64, price: u256);
 
-
+    fn set_latest_oracle_price(ref self: TContractState, token: ContractAddress,  price: u256);
 }

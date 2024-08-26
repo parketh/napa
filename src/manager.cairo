@@ -2,7 +2,7 @@
 mod Manager {
 
     use core::traits::Into;
-use core::zeroable::Zeroable;
+    use core::zeroable::Zeroable;
     use starknet::ContractAddress;
     use starknet::info::{get_block_timestamp, get_caller_address, get_contract_address};
     use cmp::{min, max};
@@ -14,6 +14,8 @@ use core::zeroable::Zeroable;
     use napa::interfaces::IERC20::{IERC20Dispatcher, IERC20DispatcherTrait};
     use napa::types::core::{Market, TokenInfo, Order, Limit, Account};
     use napa::types::i256::{i256, I256Trait, I256Zeroable};
+
+    use debug::PrintTrait;
 
     ////////////////////////////////
     // STORAGE
@@ -42,6 +44,8 @@ use core::zeroable::Zeroable;
         // TEMP
         // Indexed by (token, timestamp)
         oracle_price: LegacyMap::<(ContractAddress, u64), u256>,
+        // Indexed by token
+        latest_oracle_price: LegacyMap::<ContractAddress, u256>,
     }
 
     ////////////////////////////////
@@ -114,12 +118,24 @@ use core::zeroable::Zeroable;
             self.markets.read(market_id)
         }
 
+        fn get_order(self: @ContractState, order_id: felt252) -> Order {
+            self.orders.read(order_id)
+        }
+
+        fn get_limit(self: @ContractState, market_id: felt252, limit: u256) -> Limit {
+            self.limits.read((market_id, limit))
+        }
+
         fn get_token_info(self: @ContractState, token: ContractAddress) -> TokenInfo {
             self.token_info.read(token)
         }
 
         fn get_oracle_price(self: @ContractState, token: ContractAddress, timestamp: u64) -> u256 {
             self.oracle_price.read((token, timestamp))
+        }
+
+        fn get_latest_oracle_price(self: @ContractState, token: ContractAddress) -> u256 {
+            self.latest_oracle_price.read(token)
         }
 
         fn get_balance(self: @ContractState, user: ContractAddress) -> u256 {
@@ -255,8 +271,8 @@ use core::zeroable::Zeroable;
                     is_call,
                     expiry_date,
                     strike_price,
-                    bid_limit: premium,
-                    ask_limit: premium,
+                    bid_limit: if is_buy { premium } else { 0 },
+                    ask_limit: if is_buy { 0 } else { premium },
                 };
             }
 
@@ -271,7 +287,9 @@ use core::zeroable::Zeroable;
 
             // Check order is limit order.
             assert(
-                is_new || (is_buy && premium < market.ask_limit || !is_buy && premium > market.bid_limit), 
+                is_new || 
+                (is_buy && (market.ask_limit == 0 || premium < market.ask_limit) ||
+                !is_buy && (market.bid_limit == 0 || premium > market.bid_limit)), 
                 'NotLimitOrder'
             );
 
@@ -296,8 +314,12 @@ use core::zeroable::Zeroable;
             if limit.num_contracts == 0 {
                 let mut prev_limit_struct = self.limits.read((market_id, prev_limit));
                 let mut next_limit_struct = self.limits.read((market_id, next_limit));
-                assert(prev_limit_struct.next_limit == next_limit, 'NextLimitInvalid');
-                assert(next_limit_struct.prev_limit == prev_limit, 'PrevLimitInvalid');
+                if prev_limit != 0 {
+                    assert(prev_limit_struct.next_limit == next_limit, 'NextLimitInvalid');
+                }
+                if next_limit != 0 {
+                    assert(next_limit_struct.prev_limit == prev_limit, 'PrevLimitInvalid');
+                }
 
                 limit = Limit {
                     prev_limit,
@@ -322,9 +344,9 @@ use core::zeroable::Zeroable;
                 self.orders.write(prev_order_id, prev_order);
             }
 
-            // If order is the new inside, update bid and/or ask limit.
-            if order.is_buy && premium > market.bid_limit { market.bid_limit = premium; }
-            if !order.is_buy && premium < market.ask_limit { market.ask_limit = premium; }
+            // If order is the new inside quote, update bid and/or ask limit.
+            if order.is_buy && (market.bid_limit == 0 || premium > market.bid_limit) { market.bid_limit = premium; }
+            if !order.is_buy && (market.ask_limit == 0 || premium < market.ask_limit) { market.ask_limit = premium; }
 
             // Commit state updates.
             self.limits.write((market_id, premium), limit);
@@ -374,7 +396,8 @@ use core::zeroable::Zeroable;
             } else { 
                 self.limits.read((market_id, market.bid_limit))
             };
-            let mut next_order = self.orders.read(next_limit.head_order_id);
+            let cached_next_order_id = next_limit.head_order_id;
+            let mut next_order = self.orders.read(cached_next_order_id);
 
             // Fill amount and update balances.
             let capped_num_contracts = min(num_contracts, next_order.num_contracts - next_order.filled_contracts);
@@ -402,10 +425,10 @@ use core::zeroable::Zeroable;
             account.order_id = order_id;
             self.accounts.write(caller, account);
 
-            // Update order book.
-            if capped_num_contracts < num_contracts {
-                next_order.filled_contracts += capped_num_contracts;
-            } else {
+            // Update opposing order and if necessary, unlink from orderbook.
+            next_order.filled_contracts += capped_num_contracts;
+            next_limit.num_contracts -= capped_num_contracts;
+            if capped_num_contracts >= num_contracts {
                 // Remove opposing order from order book.
                 next_limit.head_order_id = next_order.next_order_id;
                 if next_limit.head_order_id == 0 {
@@ -415,6 +438,18 @@ use core::zeroable::Zeroable;
                 if next_limit.head_order_id == 0 {
                     next_limit.tail_order_id = 0;
                 }
+                // Update limits.
+                if is_buy && next_limit.next_limit != 0 {
+                    let mut new_lowest_ask = self.limits.read((market_id, next_limit.next_limit));
+                    new_lowest_ask.prev_limit = 0;
+                    self.limits.write((market_id, next_limit.next_limit), new_lowest_ask);
+                }
+                if !is_buy && next_limit.prev_limit != 0 {
+                    let mut new_highest_bid = self.limits.read((market_id, next_limit.prev_limit));
+                    new_highest_bid.next_limit = 0;
+                    self.limits.write((market_id, next_limit.prev_limit), new_highest_bid);
+                }
+                
                 // Update market.
                 if is_buy { market.ask_limit = next_limit.next_limit; }
                 else { market.bid_limit = next_limit.prev_limit; }
@@ -422,7 +457,8 @@ use core::zeroable::Zeroable;
 
             // Commit state updates.
             self.limits.write((market_id, next_order.premium), next_limit);
-            self.orders.write(next_order.next_order_id, next_order);
+            self.orders.write(cached_next_order_id, next_order);
+            self.markets.write(market_id, market);
 
             // Return order id and filled amount.
             (order_id, capped_num_contracts)
@@ -553,7 +589,6 @@ use core::zeroable::Zeroable;
             self.emit(Event::ChangeOwner(ChangeOwner { old: owner, new: new_owner }));
         }
 
-
         ////////////////////////////////
         // TEMP
         ////////////////////////////////
@@ -563,9 +598,20 @@ use core::zeroable::Zeroable;
         //
         // # Arguments
         // * `token` - token
+        // * `timestamp` - timestamp corresponding to price
         // * `price` - price
-        fn update_oracle_price(ref self: ContractState, token: ContractAddress, timestamp: u64, price: u256) {
+        fn set_oracle_price(ref self: ContractState, token: ContractAddress, timestamp: u64, price: u256) {
             self.oracle_price.write((token, timestamp), price);
+        }
+
+        // Updates latest oracle price.
+        // TODO: Remove this once we have a real oracle.
+        //
+        // # Arguments
+        // * `token` - token
+        // * `price` - price
+        fn set_latest_oracle_price(ref self: ContractState, token: ContractAddress, price: u256) {
+            self.latest_oracle_price.write(token, price);
         }
 
     }
